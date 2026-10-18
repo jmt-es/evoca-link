@@ -46,7 +46,7 @@ Clone the repository instead of downloading `evoca_link.py` alone: it imports th
 
 `pair` starts the daemon if it is not running and prints a QR code, a six-digit **safety code** (Evoca calls it Security Code) and the same pairing code as text. The code lasts 5 minutes (`--ttl SECONDS` changes it, from 30 s to 15 min) and works for one iPhone only.
 
-1. On the iPhone: Evoca › Settings › Your Agents › **Connect to a Computer** (Ajustes › Tus agentes › Conectar con un ordenador, in Spanish). Scan the QR code, or copy the text from the terminal and tap **Paste Code** (with Universal Clipboard it arrives by itself). The first time, iOS asks for camera and local network access.
+1. On the iPhone: Evoca › Settings › Your Agents › **Connect to a Computer** (Ajustes › Tus agentes › Conectar con un ordenador, in Spanish). Scan the QR code, or copy the text from the terminal and tap **Paste Code** (with Universal Clipboard it arrives by itself). The first time, iOS asks for access to the camera, Face ID and the local network.
 2. The iPhone shows the computer's name and a Security Code. Check that it is the one in the terminal, tap **Connect** and confirm with Face ID or the iPhone passcode.
 3. The terminal says "Paired with …" and prints the commands to connect your agents.
 
@@ -215,7 +215,7 @@ Clona el repositorio en vez de bajar solo `evoca_link.py`: importa los `link_*.p
 
 `pair` arranca el daemon si no está en marcha y pinta un QR, un **código de seguridad** de seis dígitos y el mismo código de emparejamiento en texto. Dura 5 minutos (`--ttl SEGUNDOS` lo cambia, de 30 s a 15 min) y sirve para un solo iPhone.
 
-1. En el iPhone: Evoca › Ajustes › Tus agentes › **Conectar con un ordenador** (Settings › Your Agents › Connect to a Computer, en inglés). Escanea el QR, o copia el texto de la terminal y toca **Pegar código** (con Portapapeles universal llega solo). La primera vez, iOS pide acceso a la cámara y a la red local.
+1. En el iPhone: Evoca › Ajustes › Tus agentes › **Conectar con un ordenador** (Settings › Your Agents › Connect to a Computer, en inglés). Escanea el QR, o copia el texto de la terminal y toca **Pegar código** (con Portapapeles universal llega solo). La primera vez, iOS pide acceso a la cámara, a Face ID y a la red local.
 2. El iPhone muestra el nombre del ordenador y un código de seguridad. Comprueba que es el de la terminal, toca **Conectar** y confirma con Face ID o el código del iPhone.
 3. La terminal dice «Emparejado con …» y te da los comandos para conectar tus agentes.
 
