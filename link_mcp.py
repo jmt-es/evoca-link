@@ -65,6 +65,8 @@ class Bridge:
                 raise ToolError("The iPhone stopped answering, so the bridge dropped that link. If Evoca is still open it reconnects by itself within seconds: try again; otherwise ask the user to open Evoca.") from failure
             if failure.code == "slow":
                 raise ToolError(f"The iPhone is connected but did not finish within {timeout:.0f} s (a long archive or a busy iPhone). Narrow the request (since and until, a smaller limit or fewer hours) or try again.") from failure
+            if failure.code == "demo":
+                raise ToolError(failure.message) from failure
             raise ToolError(f"evoca-link: {failure.message}") from failure
         return {"as_of": reply.get("as_of"), "source": "iphone (live)", "phone": reply.get("phone"), "path": reply.get("path"), **reply["result"]}
 
@@ -89,6 +91,7 @@ async def status() -> dict:
             "connected": p["connected"],
             "path": (p.get("path") or {}).get("kind") if p["connected"] else None,
             "last_seen": datetime.fromtimestamp(p["last_seen"]).astimezone().isoformat(timespec="seconds") if p.get("last_seen") else None,
+            **{flag: True for flag in ("demo", "simulator") if p.get(flag)},
         }
         for p in overview.get("phones", [])
     ]

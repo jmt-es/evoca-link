@@ -79,6 +79,16 @@ class McpOverTheLinkTests(unittest.IsolatedAsyncioTestCase):
                 ok, failure = await self.call(session, "search", {"query": "  "})
                 self.assertFalse(ok)
 
+                self.phone.result_extra = {"engine": "Demostración · v4"}
+                ok, message = await self.call(session, "day_recap", {"day": "hoy"})
+                self.assertFalse(ok)
+                self.assertIn("demo data", message)
+                self.phone.result_extra = {}
+                ok, status = await self.call(session, "status", {})
+                self.assertFalse(status["connected"])
+                self.assertTrue(status["phones"][0]["demo"])
+                self.assertIn("demo data", status["hint"])
+
                 self.phone.connection.close(0, b"background")
                 for _ in range(60):
                     if not self.daemon.sessions:

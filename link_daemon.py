@@ -4,6 +4,7 @@ import json
 import logging
 import logging.handlers
 import os
+import re
 import secrets
 import time
 from dataclasses import dataclass, field
@@ -46,6 +47,13 @@ CLOSE_REVOKED = 2
 CLOSE_NOT_PAIRED = 3
 CLOSE_REPLACED = 4
 CLOSE_SHUTDOWN = 5
+ALLOW_DEMO_ENV = "EVOCA_LINK_ALLOW_DEMO"
+DEMO_RECAP_ENGINE = re.compile(r"(?:Demostración|Demo) · v\d+")
+DEMO_MESSAGE = (
+    "The iPhone on the link is serving demo data (Evoca in demo mode or running in a simulator), not the user's recordings, "
+    "so the bridge does not pass it on. Ask the user to open Evoca on their own iPhone. "
+    f"To read demo data on purpose, start the bridge with {ALLOW_DEMO_ENV}=1."
+)
 
 
 class ControlError(Exception):
@@ -53,6 +61,21 @@ class ControlError(Exception):
         super().__init__(message)
         self.code = code
         self.message = message
+
+
+def demo_allowed() -> bool:
+    return os.environ.get(ALLOW_DEMO_ENV) == "1"
+
+
+def carries_demo_recap(value) -> bool:
+    """Evoca builds that do not say they run in demo mode still sign their demo recaps with this engine label, which no transcript can contain."""
+    if isinstance(value, str):
+        return DEMO_RECAP_ENGINE.search(value) is not None
+    if isinstance(value, dict):
+        return any(carries_demo_recap(item) for item in value.values())
+    if isinstance(value, list):
+        return any(carries_demo_recap(item) for item in value)
+    return False
 
 
 async def read_frame(stream, timeout: float) -> dict:
@@ -90,6 +113,12 @@ class PhoneSession:
     time_zone: str | None
     connected_at: float
     next_id: int = 1
+    demo: bool = False
+    simulator: bool = False
+
+    @property
+    def serves_demo(self) -> bool:
+        return self.demo or self.simulator
 
     def path(self) -> dict:
         try:
@@ -281,6 +310,8 @@ class LinkDaemon:
             app=str(hello.get("app") or ""),
             time_zone=hello.get("time_zone"),
             connected_at=time.time(),
+            demo=hello.get("demo") is True,
+            simulator=hello.get("simulator") is True,
         )
         self.sessions[phone_id] = session
         try:
@@ -288,6 +319,8 @@ class LinkDaemon:
                 self.close_session(previous, CLOSE_REPLACED, b"replaced by a newer link")
             self.seen(phone_id, session.app)
             log.info("live link with %s over %s", phone.name, session.path().get("kind"))
+            if session.serves_demo:
+                log.warning("%s says it runs %s: its answers are not passed on", phone.name, "in a simulator" if session.simulator else "in demo mode")
             self.spawn(self.phone_messages(session))
             reason = await connection.closed()
             log.info("link with %s closed: %s", phone.name, reason)
@@ -416,6 +449,8 @@ class LinkDaemon:
                 "device": session.device if session else None,
                 "app": session.app if session else phone.app,
                 "path": session.path() if session else None,
+                "demo": session.demo if session else None,
+                "simulator": session.simulator if session else None,
             })
         return {
             "computer": {"name": self.name, "id": self.endpoint.id().to_bytes().hex(), "relay_url": address.relay_url(), "addresses": address.direct_addresses()},
@@ -427,6 +462,8 @@ class LinkDaemon:
         session = self.current_session()
         if session is None:
             raise ControlError("not_connected", "not connected")
+        if session.serves_demo and not demo_allowed():
+            raise ControlError("demo", DEMO_MESSAGE)
         started = time.monotonic()
         try:
             result, as_of = await session.call(method, params, timeout)
@@ -441,6 +478,10 @@ class LinkDaemon:
             self.close_session(session, 1, b"stream failed")
             raise ControlError("not_connected", f"the link dropped: {error.message()}") from error
         log.info("%s answered in %.2fs", method, time.monotonic() - started)
+        if not demo_allowed() and carries_demo_recap(result):
+            session.demo = True
+            log.warning("%s answered %s with a demo recap: its answers are no longer passed on", session.name, method)
+            raise ControlError("demo", DEMO_MESSAGE)
         return {"result": result, "as_of": as_of, "phone": session.name, "path": session.path()["kind"]}
 
     def unpair(self, wanted: str) -> dict:

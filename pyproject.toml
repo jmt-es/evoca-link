@@ -1,0 +1,24 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "evoca-link"
+version = "0.2.0"
+description = "Computer side of Evoca Link: a live, end-to-end encrypted bridge between Evoca on your iPhone and Claude Code, Codex or any MCP client."
+readme = "README.md"
+requires-python = ">=3.11"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [{ name = "Javier Martínez Tornero" }]
+dependencies = ["iroh==1.1.0", "mcp>=2.3,<3", "segno>=1.6,<2"]
+
+[project.urls]
+Homepage = "https://evoca.day"
+Source = "https://github.com/jmt-es/evoca-link"
+
+[project.scripts]
+evoca-link = "evoca_link:main"
+
+[tool.setuptools]
+py-modules = ["evoca_link", "link_client", "link_daemon", "link_mcp", "link_protocol", "link_state"]
