@@ -3,9 +3,11 @@ import base64
 import dataclasses
 import json
 import logging
+import os
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 try:
     import iroh
@@ -32,6 +34,8 @@ class FakePhone:
         self.server = None
         self.frozen = False
         self.answering: set[asyncio.Task] = set()
+        self.hello_extra: dict = {}
+        self.result_extra: dict = {}
 
     async def start(self):
         self.endpoint = await iroh.Endpoint.bind(iroh.EndpointOptions(preset=iroh.preset_minimal(), bind_addr="127.0.0.1:0"))
@@ -55,7 +59,7 @@ class FakePhone:
     async def link(self, offer: lp.PairingOffer) -> dict:
         self.connection = await self.endpoint.connect(self.address(offer), lp.LINK_ALPN)
         stream = await self.connection.open_bi()
-        await send_frame(stream.send(), {"type": "hello", "v": 1, "device": self.name, "app": "1.1 (test)", "methods": ["status"], "time_zone": "Europe/Madrid"})
+        await send_frame(stream.send(), {"type": "hello", "v": 1, "device": self.name, "app": "1.1 (test)", "methods": ["status"], "time_zone": "Europe/Madrid", **self.hello_extra})
         reply = await read_frame(stream.recv(), 10)
         if reply.get("type") == "welcome":
             self.server = asyncio.create_task(self.serve())
@@ -84,7 +88,7 @@ class FakePhone:
         if message["method"] == "fail":
             answer = {"v": 1, "id": message["id"], "ok": False, "as_of": AS_OF, "error": {"code": "invalid_params", "message": "Falta la fecha"}}
         else:
-            answer = {"v": 1, "id": message["id"], "ok": True, "as_of": AS_OF, "result": {"method": message["method"], "params": message["params"]}}
+            answer = {"v": 1, "id": message["id"], "ok": True, "as_of": AS_OF, "result": {"method": message["method"], "params": message["params"], **self.result_extra}}
         try:
             await send_frame(stream.send(), answer)
         except iroh.IrohError:
@@ -228,6 +232,64 @@ class BridgeTests(unittest.IsolatedAsyncioTestCase):
         results = await asyncio.gather(*(self.daemon.call("recent", {"hours": h}, 5) for h in range(1, 6)))
         self.assertEqual([r["result"]["params"]["hours"] for r in results], [1, 2, 3, 4, 5])
 
+    async def test_a_phone_in_demo_mode_passes_nothing_on(self):
+        self.phone.hello_extra = {"demo": True}
+        offer = await self.offer()
+        await self.phone.pair(offer)
+        self.assertEqual((await self.phone.link(offer))["type"], "welcome")
+        with self.assertRaises(ControlError) as raised:
+            await self.daemon.call("search", {"query": "lunes"}, 5)
+        self.assertEqual(raised.exception.code, "demo")
+        self.assertEqual(self.phone.served, [])
+        phone = self.daemon.status()["phones"][0]
+        self.assertTrue(phone["connected"])
+        self.assertTrue(phone["demo"])
+        self.assertFalse(phone["simulator"])
+
+    async def test_a_simulator_passes_nothing_on(self):
+        self.phone.hello_extra = {"simulator": True}
+        offer = await self.offer()
+        await self.phone.pair(offer)
+        await self.phone.link(offer)
+        with self.assertRaises(ControlError) as raised:
+            await self.daemon.call("day_recap", {"day": "hoy"}, 5)
+        self.assertEqual(raised.exception.code, "demo")
+        self.assertEqual(self.phone.served, [])
+        self.assertTrue(self.daemon.status()["phones"][0]["simulator"])
+
+    async def test_flags_that_are_not_true_change_nothing(self):
+        self.phone.hello_extra = {"demo": False, "simulator": "yes"}
+        offer = await self.offer()
+        await self.phone.pair(offer)
+        await self.phone.link(offer)
+        reply = await self.daemon.call("search", {"query": "lunes"}, 5)
+        self.assertEqual(reply["result"]["method"], "search")
+
+    async def test_an_answer_signed_by_the_demo_recap_engine_closes_that_link_to_agents(self):
+        self.phone.result_extra = {"recap": {"engine": "Demostración · v4", "headline": "Lanzamiento de la web"}}
+        offer = await self.offer()
+        await self.phone.pair(offer)
+        await self.phone.link(offer)
+        with self.assertRaises(ControlError) as raised:
+            await self.daemon.call("day_recap", {"day": "hoy"}, 5)
+        self.assertEqual(raised.exception.code, "demo")
+        self.phone.result_extra = {}
+        with self.assertRaises(ControlError) as raised:
+            await self.daemon.call("search", {"query": "lunes"}, 5)
+        self.assertEqual(raised.exception.code, "demo")
+        self.assertEqual([m["method"] for m in self.phone.served], ["day_recap"])
+        self.assertTrue(self.daemon.status()["phones"][0]["demo"])
+
+    async def test_demo_data_passes_when_the_computer_allows_it(self):
+        self.phone.hello_extra = {"demo": True}
+        self.phone.result_extra = {"markdown": "_Resumen automático escrito en el iPhone (Demostración · v4)._"}
+        offer = await self.offer()
+        await self.phone.pair(offer)
+        await self.phone.link(offer)
+        with mock.patch.dict(os.environ, {link_daemon.ALLOW_DEMO_ENV: "1"}):
+            reply = await self.daemon.call("read_day", {"day": "hoy"}, 5)
+        self.assertIn("Demostración · v4", reply["result"]["markdown"])
+
     async def test_the_link_closing_leaves_calls_saying_not_connected(self):
         offer = await self.offer()
         await self.phone.pair(offer)
@@ -302,6 +364,30 @@ class BridgeTests(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(ControlFailure) as raised:
             await request(self.state, {"op": "call", "method": "search", "params": {"query": "x" * 70_000}}, 5)
         self.assertEqual(raised.exception.code, "bad_request")
+
+
+@unittest.skipIf(iroh is None, "needs the iroh package: uv run --with iroh==1.1.0 python -m unittest test_link_bridge")
+class DemoRecapSignatureTests(unittest.TestCase):
+    def test_the_demo_engine_is_found_wherever_the_answer_carries_it(self):
+        for answer in (
+            {"engine": "Demostración · v4"},
+            {"engine": "Demo · v12"},
+            {"days": [{"recap": {"engine": "Demostración · v5"}}]},
+            {"markdown": "# Lunes\n\n_Resumen automático escrito en el iPhone (Demostración · v4) el 2026-10-12T14:04:12+02:00._"},
+        ):
+            with self.subTest(answer=answer):
+                self.assertTrue(link_daemon.carries_demo_recap(answer))
+
+    def test_real_engines_and_ordinary_speech_are_not_demo(self):
+        for answer in (
+            {"engine": "AFM 3 Core Advanced · v6"},
+            {"engine": "Apple Intelligence en el dispositivo"},
+            {"hits": [{"text": "Hicimos una demostración del producto, la v4 sale el lunes."}]},
+            {"text": "Demo v4"},
+            {"minutes": 855, "final": True, "phrases": None},
+        ):
+            with self.subTest(answer=answer):
+                self.assertFalse(link_daemon.carries_demo_recap(answer))
 
 
 if __name__ == "__main__":

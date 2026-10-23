@@ -19,6 +19,7 @@ from link_state import LinkState
 
 SCRIPT = Path(__file__).resolve()
 PAIR_POLL_SECONDS = 30
+PACKAGE_SOURCE = "git+https://github.com/jmt-es/evoca-link"
 
 
 def spanish() -> bool:
@@ -31,7 +32,14 @@ def t(english: str, spanish_text: str) -> str:
 
 
 def mcp_command() -> str:
-    return f'uv run --quiet --script "{SCRIPT}" mcp'
+    """uvx runs the command from a cache that uv may prune, so the agents get the uvx line again instead of that path."""
+    launcher = Path(sys.argv[0])
+    resolved = launcher.resolve()
+    if resolved == SCRIPT:
+        return f'uv run --quiet --script "{SCRIPT}" mcp'
+    if any(part.startswith("archive-v") for part in resolved.parts):
+        return f"uvx --from {PACKAGE_SOURCE} evoca-link mcp"
+    return f'"{launcher.absolute()}" mcp'
 
 
 def print_qr(text: str) -> None:
@@ -110,7 +118,8 @@ async def status(state: LinkState, as_json: bool) -> int:
         if phone.get("connected"):
             path = phone.get("path") or {}
             detail = f"{path.get('kind', '?')}, {path.get('rtt_ms', '?')} ms"
-            print(t(f"• {phone['name']}: connected since {when(phone['connected_since'])} ({detail})", f"• {phone['name']}: conectado desde {when(phone['connected_since'])} ({detail})"))
+            demo = t(" — demo data, not passed on to agents", " — datos de demostración, no se pasan a los agentes") if phone.get("demo") or phone.get("simulator") else ""
+            print(t(f"• {phone['name']}: connected since {when(phone['connected_since'])} ({detail}){demo}", f"• {phone['name']}: conectado desde {when(phone['connected_since'])} ({detail}){demo}"))
         else:
             print(t(f"• {phone['name']}: not connected, last seen {when(phone.get('last_seen'))}", f"• {phone['name']}: sin conexión, visto por última vez {when(phone.get('last_seen'))}"))
     print(t(f"MCP: claude mcp add --scope user evoca-link -- {mcp_command()}", f"MCP: claude mcp add --scope user evoca-link -- {mcp_command()}"))

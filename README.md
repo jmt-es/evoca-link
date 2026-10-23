@@ -36,13 +36,21 @@ It has been tested on macOS (Apple Silicon). The code handles Windows and Linux 
 
 ## Install and pair
 
+There is nothing to clone. With uv, one line pairs the iPhone:
+
 ```bash
-git clone https://github.com/jmt-es/evoca-link.git
-cd evoca-link
-uv run --script evoca_link.py pair
+uvx --from git+https://github.com/jmt-es/evoca-link evoca-link pair
 ```
 
-Clone the repository instead of downloading `evoca_link.py` alone: it imports the `link_*.py` files next to it. The first run lets uv fetch the dependencies; later runs start at once. To update, `git pull`.
+The first run lets uv fetch evoca-link and its dependencies; later runs start at once. `uvx --refresh …` brings the latest version.
+
+To type `evoca-link pair` exactly as Evoca's screens say, install the command once (`uv tool upgrade evoca-link` updates it):
+
+```bash
+uv tool install git+https://github.com/jmt-es/evoca-link
+```
+
+To read or change the code, run it from a clone instead: `git clone https://github.com/jmt-es/evoca-link.git`, then `uv run --script evoca_link.py pair` inside it (the script imports the `link_*.py` files next to it, so download the whole repository, not `evoca_link.py` alone).
 
 `pair` starts the daemon if it is not running and prints a QR code, a six-digit **safety code** (Evoca calls it Security Code) and the same pairing code as text. The code lasts 5 minutes (`--ttl SECONDS` changes it, from 30 s to 15 min) and works for one iPhone only.
 
@@ -52,50 +60,44 @@ Clone the repository instead of downloading `evoca_link.py` alone: it imports th
 
 From then on there is nothing else to do: every time you open Evoca the link opens by itself ("Active link with …", top left of Today) and it closes when you leave Evoca.
 
-The screens of Evoca say `evoca-link pair`. To type exactly that, add an alias to your shell (change the path to where you cloned the repository):
-
-```bash
-alias evoca-link='uv run --quiet --script ~/evoca-link/evoca_link.py'
-```
-
 ## Connect your agents
 
-`pair` prints these commands with the real path of your clone. Use an absolute path to `evoca_link.py`.
+`pair` prints these commands for the way you ran it.
 
 Claude Code:
 
 ```bash
-claude mcp add --scope user evoca-link -- uv run --quiet --script /path/to/evoca-link/evoca_link.py mcp
+claude mcp add --scope user evoca-link -- uvx --from git+https://github.com/jmt-es/evoca-link evoca-link mcp
 ```
 
 Codex:
 
 ```bash
-codex mcp add evoca-link -- uv run --quiet --script /path/to/evoca-link/evoca_link.py mcp
+codex mcp add evoca-link -- uvx --from git+https://github.com/jmt-es/evoca-link evoca-link mcp
 ```
 
 or in `~/.codex/config.toml`:
 
 ```toml
 [mcp_servers.evoca-link]
-command = "uv"
-args = ["run", "--quiet", "--script", "/path/to/evoca-link/evoca_link.py", "mcp"]
+command = "uvx"
+args = ["--from", "git+https://github.com/jmt-es/evoca-link", "evoca-link", "mcp"]
 ```
 
-Any other MCP client that starts stdio servers:
+Claude Desktop and any other MCP client that starts stdio servers:
 
 ```json
 {
   "mcpServers": {
     "evoca-link": {
-      "command": "uv",
-      "args": ["run", "--quiet", "--script", "/path/to/evoca-link/evoca_link.py", "mcp"]
+      "command": "uvx",
+      "args": ["--from", "git+https://github.com/jmt-es/evoca-link", "evoca-link", "mcp"]
     }
   }
 }
 ```
 
-On Windows, use the path of your copy (`C:\…\evoca-link\evoca_link.py`). If an app cannot find `uv` because it does not inherit your shell's `PATH`, put the absolute path of `uv` as the command (`which uv`, or `where uv` on Windows). Several agents at once share the same daemon and the same link. In Claude Code, `/mcp` lists `evoca-link` once it is connected.
+With `uv tool install`, the command is just `evoca-link mcp`; from a clone, `uv run --quiet --script /path/to/evoca-link/evoca_link.py mcp`. If an app cannot find `uvx` or `evoca-link` because it does not inherit your shell's `PATH` (Claude Desktop, for one), put the absolute path as the command (`which uvx`, or `where uvx` on Windows). Several agents at once share the same daemon and the same link. In Claude Code, `/mcp` lists `evoca-link` once it is connected.
 
 ## MCP tools
 
@@ -114,16 +116,20 @@ Day arguments take `today` (or `hoy`), `yesterday` (or `ayer`) or `YYYY-MM-DD`.
 
 With the iPhone out of reach (Evoca closed or in the background), every tool answers with a clear error: open Evoca on the iPhone. If an answer takes longer than its deadline (30 s; for `transcript_since`, 30 s plus the wait), the bridge asks the iPhone over another stream. If it answers, the link stays and the tool says to narrow the request; if not, the bridge closes that link and later calls say at once that it is not connected.
 
+Demo data never passes for yours. If the iPhone on the link says it runs Evoca in demo mode or in a simulator, or one of its answers carries a recap signed by the demo engine («Demostración · v…» or «Demo · v…»), the tools answer with an error instead of the data for as long as that link lasts, and `status` marks the iPhone with `demo` or `simulator`. Starting the bridge with `EVOCA_LINK_ALLOW_DEMO=1` lets demo data through, for tests.
+
 ## Other commands
 
 ```bash
-uv run --script evoca_link.py status                           # bridge, paired iPhones, link (direct or relay, RTT)
-uv run --script evoca_link.py call search '{"query": "monday"}'  # one raw call, for debugging
-uv run --script evoca_link.py unpair "iPhone"                  # forget a paired iPhone on this computer
-uv run --script evoca_link.py stop                             # stop the daemon (mcp and pair start it again)
-uv run --script evoca_link.py daemon --no-relay                # run the daemon yourself, direct connections only
-uv run --script mcp_smoke.py                                   # a real MCP client calling every tool (Evoca open on the iPhone)
+evoca-link status                           # bridge, paired iPhones, link (direct or relay, RTT)
+evoca-link call search '{"query": "monday"}'  # one raw call, for debugging
+evoca-link unpair "iPhone"                  # forget a paired iPhone on this computer
+evoca-link stop                             # stop the daemon (mcp and pair start it again)
+evoca-link daemon --no-relay                # run the daemon yourself, direct connections only
+uv run --script mcp_smoke.py                # from a clone: a real MCP client calling every tool (Evoca open on the iPhone)
 ```
+
+Without `uv tool install`, put `uvx --from git+https://github.com/jmt-es/evoca-link` before `evoca-link`; from a clone, `uv run --script evoca_link.py` instead of `evoca-link`.
 
 The daemon that `pair` and `mcp` start by themselves uses n0's public relay and discovery. To keep your computer away from them, run `stop` if a daemon is running, then start `daemon --no-relay` and leave it running: the other commands reuse it, and the pairing code then carries only direct addresses (same network or VPN). The iPhone always uses n0's relay and discovery on its side.
 
@@ -153,10 +159,10 @@ The daemon listens on 127.0.0.1 only and every request needs the random token of
 ## Tests
 
 ```bash
-uv run --python ">=3.11" --with iroh==1.1.0 --with "mcp>=2.3,<3" --with "segno>=1.6,<2" python -m unittest -v
+uv run python -m unittest -v
 ```
 
-`test_link_protocol` checks the QR, the codes, the proofs and the frames, and needs no dependencies: `python3 -m unittest -v test_link_protocol` runs it alone. `test_link_bridge` pairs, links, queries and revokes a simulated iPhone written in Python over real iroh (127.0.0.1, no relay). `test_link_mcp` calls the tools with a real MCP client through the daemon.
+uv installs the dependencies that `pyproject.toml` declares, at the versions of `uv.lock`. `test_link_protocol` checks the QR, the codes, the proofs and the frames, and needs no dependencies: `python3 -m unittest -v test_link_protocol` runs it alone. `test_link_bridge` pairs, links, queries and revokes a simulated iPhone written in Python over real iroh (127.0.0.1, no relay). `test_link_mcp` calls the tools with a real MCP client through the daemon.
 
 ## Limits of this version
 
@@ -205,13 +211,21 @@ Está probado en macOS (Apple Silicon). El código contempla también Windows y 
 
 ### Instalar y emparejar
 
+No hay nada que clonar. Con uv, una línea empareja el iPhone:
+
 ```bash
-git clone https://github.com/jmt-es/evoca-link.git
-cd evoca-link
-uv run --script evoca_link.py pair
+uvx --from git+https://github.com/jmt-es/evoca-link evoca-link pair
 ```
 
-Clona el repositorio en vez de bajar solo `evoca_link.py`: importa los `link_*.py` que tiene al lado. La primera vez uv descarga las dependencias; las siguientes arranca al momento. Para actualizar, `git pull`.
+La primera vez uv descarga evoca-link y sus dependencias; las siguientes arranca al momento. `uvx --refresh …` trae la última versión.
+
+Para escribir `evoca-link pair` tal cual lo dicen las pantallas de Evoca, instala el comando una vez (`uv tool upgrade evoca-link` lo actualiza):
+
+```bash
+uv tool install git+https://github.com/jmt-es/evoca-link
+```
+
+Para leer o cambiar el código, úsalo desde una copia: `git clone https://github.com/jmt-es/evoca-link.git` y, dentro, `uv run --script evoca_link.py pair` (el script importa los `link_*.py` que tiene al lado, así que baja el repositorio entero, no solo `evoca_link.py`).
 
 `pair` arranca el daemon si no está en marcha y pinta un QR, un **código de seguridad** de seis dígitos y el mismo código de emparejamiento en texto. Dura 5 minutos (`--ttl SEGUNDOS` lo cambia, de 30 s a 15 min) y sirve para un solo iPhone.
 
@@ -221,37 +235,31 @@ Clona el repositorio en vez de bajar solo `evoca_link.py`: importa los `link_*.p
 
 Desde ahí no hay que hacer nada más: cada vez que abres Evoca el enlace se abre solo («Enlace activo con …», arriba a la izquierda en Hoy) y se cierra al salir de Evoca.
 
-Las pantallas de Evoca dicen `evoca-link pair`. Para escribir exactamente eso, añade un alias a tu shell (cambia la ruta por la de tu copia del repositorio):
-
-```bash
-alias evoca-link='uv run --quiet --script ~/evoca-link/evoca_link.py'
-```
-
 ### Conectar los agentes
 
-`pair` imprime estos comandos con la ruta real de tu copia. Usa una ruta absoluta a `evoca_link.py`.
+`pair` imprime estos comandos según cómo lo hayas ejecutado.
 
 Claude Code:
 
 ```bash
-claude mcp add --scope user evoca-link -- uv run --quiet --script /ruta/a/evoca-link/evoca_link.py mcp
+claude mcp add --scope user evoca-link -- uvx --from git+https://github.com/jmt-es/evoca-link evoca-link mcp
 ```
 
 Codex:
 
 ```bash
-codex mcp add evoca-link -- uv run --quiet --script /ruta/a/evoca-link/evoca_link.py mcp
+codex mcp add evoca-link -- uvx --from git+https://github.com/jmt-es/evoca-link evoca-link mcp
 ```
 
 o en `~/.codex/config.toml`:
 
 ```toml
 [mcp_servers.evoca-link]
-command = "uv"
-args = ["run", "--quiet", "--script", "/ruta/a/evoca-link/evoca_link.py", "mcp"]
+command = "uvx"
+args = ["--from", "git+https://github.com/jmt-es/evoca-link", "evoca-link", "mcp"]
 ```
 
-Cualquier otro cliente MCP que arranque servidores por stdio usa el mismo `command` y `args` en su configuración (el bloque JSON de arriba). En Windows, usa la ruta de tu copia (`C:\…\evoca-link\evoca_link.py`). Si una app no encuentra `uv` porque no hereda el `PATH` de tu shell, pon la ruta absoluta de `uv` como comando (`which uv`, o `where uv` en Windows). Varios agentes a la vez comparten el mismo daemon y el mismo enlace. En Claude Code, `/mcp` lista `evoca-link` cuando está conectado.
+Claude Desktop y cualquier otro cliente MCP que arranque servidores por stdio usan el mismo `command` y `args` en su configuración (el bloque JSON de arriba). Con `uv tool install` el comando es solo `evoca-link mcp`; desde una copia, `uv run --quiet --script /ruta/a/evoca-link/evoca_link.py mcp`. Si una app no encuentra `uvx` o `evoca-link` porque no hereda el `PATH` de tu shell (Claude Desktop, por ejemplo), pon la ruta absoluta como comando (`which uvx`, o `where uvx` en Windows). Varios agentes a la vez comparten el mismo daemon y el mismo enlace. En Claude Code, `/mcp` lista `evoca-link` cuando está conectado.
 
 ### Herramientas MCP
 
@@ -259,9 +267,11 @@ Cualquier otro cliente MCP que arranque servidores por stdio usa el mismo `comma
 
 Con el iPhone fuera de alcance (Evoca cerrada o en segundo plano), cada herramienta responde con un error claro: abre Evoca en el iPhone.
 
+Los datos de demostración nunca pasan por tuyos. Si el iPhone del enlace dice que Evoca está en modo demostración o en un simulador, o una de sus respuestas trae un resumen firmado por el motor de demostración («Demostración · v…» o «Demo · v…»), las herramientas responden con un error en vez de con los datos mientras dure ese enlace, y `status` marca el iPhone con `demo` o `simulator`. Arrancar el puente con `EVOCA_LINK_ALLOW_DEMO=1` los deja pasar, para pruebas.
+
 ### Otros comandos, datos locales y problemas
 
-Los comandos (`status`, `call`, `unpair`, `stop`, `daemon --no-relay`, `mcp_smoke.py`) y la sección de problemas frecuentes están arriba, en inglés. El daemon que arrancan solos `pair` y `mcp` usa el relé y el descubrimiento públicos de n0; para que tu ordenador no los use, ejecuta `stop`, arranca `daemon --no-relay` y déjalo en marcha: el código de emparejamiento llevará solo direcciones directas (misma red o VPN). El iPhone usa siempre el relé y el descubrimiento de n0 por su parte.
+Los comandos (`evoca-link status`, `call`, `unpair`, `stop`, `daemon --no-relay` y, desde una copia, `mcp_smoke.py`) y la sección de problemas frecuentes están arriba, en inglés. Sin `uv tool install`, pon `uvx --from git+https://github.com/jmt-es/evoca-link` delante de `evoca-link`. El daemon que arrancan solos `pair` y `mcp` usa el relé y el descubrimiento públicos de n0; para que tu ordenador no los use, ejecuta `stop`, arranca `daemon --no-relay` y déjalo en marcha: el código de emparejamiento llevará solo direcciones directas (misma red o VPN). El iPhone usa siempre el relé y el descubrimiento de n0 por su parte.
 
 Desde el iPhone, Ajustes › Tus agentes › el ordenador › **Desconectar este ordenador** lo revoca. Lo que un agente ya leyó se queda en ese ordenador. «Borrar todos los datos» también desconecta todos los ordenadores. Al borrar Evoca y volver a instalarla, el primer arranque de la nueva instalación olvida los ordenadores emparejados y la identidad del enlace: hay que emparejar otra vez, y el ordenador sigue listando el iPhone de antes hasta que lo olvides con `unpair`.
 
