@@ -28,7 +28,7 @@ Evoca says the same on its pairing screen, and under Settings › Your Agents �
 ## Requirements
 
 - **[uv](https://docs.astral.sh/uv/getting-started/installation/).** It installs Python 3.11 or later if you do not have it, and the dependencies the script declares (`iroh` 1.1.0, `mcp` 2.x, `segno`).
-- **Evoca 1.2.1 or later on the iPhone**, the first version with Evoca Link (Settings › Your Agents).
+- **Evoca 1.3 or later on the iPhone**, the first App Store version with Evoca Link (Settings › Your Agents).
 - **A platform with an official `iroh` wheel on PyPI:** macOS 11 or later on Apple Silicon, Linux x86_64 or aarch64 with glibc 2.28 or later (`manylinux_2_28`), and Windows x64. There is no wheel and no source package for Intel Macs, Windows on ARM or musl-based Linux such as Alpine, so the program cannot run there.
 - The iPhone and the computer must reach each other directly (same Wi-Fi or VPN) or both have internet access (relay).
 
@@ -103,7 +103,7 @@ With `uv tool install`, the command is just `evoca-link mcp`; from a clone, `uv 
 
 | Tool | What it returns |
 |---|---|
-| `status()` | Whether the iPhone is connected (and how: direct or relay), the paired iPhones and, when connected, what the iPhone holds: days, today's minutes, fragments waiting for transcription, whether the watch or the iPhone is recording and, in `recording.on_watch`, what the watch has recorded and still holds for its next batch. It does not fail when the iPhone is away: it says so. |
+| `status()` | Whether the iPhone is connected (and how: direct or relay), the paired iPhones and, when connected, what the iPhone holds: days, today's minutes, fragments waiting for transcription, whether the watch or the iPhone is recording and, in `recording.on_watch`, what the watch has recorded and still holds for its next batch. It does not fail when the iPhone is away: it says so, and `export` says whether the latest export of Evoca on this computer can answer meanwhile (`found`, `path`, `last_written`). |
 | `list_days(limit)` | Days with minutes, phrases (without what played on a screen), moments, the headline of the recap and named places |
 | `read_day(day, offset)` | A day as Markdown (the same as Evoca's export), in chunks of 40,000 characters |
 | `search(query, since, until, limit, include_on_screen)` | The iPhone's search by words and by meaning, with who is speaking, where, and the phrase before and after |
@@ -114,9 +114,18 @@ With `uv tool install`, the command is just `evoca-link mcp`; from a clone, `uv 
 
 Day arguments take `today` (or `hoy`), `yesterday` (or `ayer`) or `YYYY-MM-DD`.
 
-With the iPhone out of reach (Evoca closed or in the background), every tool answers with a clear error: open Evoca on the iPhone. If an answer takes longer than its deadline (30 s; for `transcript_since`, 30 s plus the wait), the bridge asks the iPhone over another stream. If it answers, the link stays and the tool says to narrow the request; if not, the bridge closes that link and later calls say at once that it is not connected.
+With the iPhone out of reach (Evoca closed or in the background), the reading tools answer from the latest export of Evoca, marked as not live (see below); without an export, or with no iPhone paired, they answer with a clear error: open Evoca on the iPhone, or pair one. If an answer takes longer than its deadline (30 s; for `transcript_since`, 30 s plus the wait), the bridge asks the iPhone over another stream. If it answers, the link stays and the tool says to narrow the request; if not, the bridge closes that link and later calls say at once that it is not connected.
 
 Demo data never passes for yours. If the iPhone on the link says it runs Evoca in demo mode or in a simulator, or one of its answers carries a recap signed by the demo engine («Demostración · v…» or «Demo · v…»), the tools answer with an error instead of the data for as long as that link lasts, and `status` marks the iPhone with `demo` or `simulator`. Starting the bridge with `EVOCA_LINK_ALLOW_DEMO=1` lets demo data through, for tests.
+
+## Without the iPhone: the latest export
+
+If an iPhone is paired and does not answer (Evoca closed or in the background, or the link dropped), `list_days`, `read_day`, `search`, `moments`, `recent`, `transcript_since` and `day_recap` read the latest export of Evoca on this computer instead. It needs **Export Automatically** turned on in Evoca (Settings › Agents and Export › Export, with a folder in iCloud Drive or another provider). The folder is found by itself in iCloud Drive and in `~/Library/CloudStorage` (up to four levels deep); for any other place, and always on Windows and Linux, `EVOCA_EXPORT_DIR` points to the `Evoca` folder (the one with `manifest.json`) or to the folder that holds it.
+
+- **It cannot pass for a live answer.** `source` is `export (stale)`, `stale` is `true`, `as_of` is the time the export was written (that day's own in `read_day` and `day_recap`, the newest in the others), `iphone_unreachable` says why the iPhone did not answer and `note` says it is not live. There is no `phone` or `path`.
+- **What it lacks.** Anything after `as_of`, the search by meaning (`search` matches words only), audio and Health data. `transcript_since` returns phrases instead of paragraphs and its `coverage` never claims to be complete: `complete` is always `false` and `coverage.unknown` marks the stretch the export cannot know. A day that was not exported gives an empty result, not an error.
+- **When it does not apply.** With the iPhone connected (it answers itself), connected but busy (`slow`), answering with an error, with the bridge not running, and with no iPhone paired: `unpair` stops this bridge from reading the export, and so does **Disconnect This Computer** on the iPhone when the link is open; with the link closed the computer is not told and keeps reading the export until you `unpair`. Without an export the earlier error stays, with one more sentence on how to point to one.
+- **Read only.** It writes nothing and does not touch the folder; `status` says whether there is one.
 
 ## Other commands
 
@@ -162,11 +171,11 @@ The daemon listens on 127.0.0.1 only and every request needs the random token of
 uv run python -m unittest -v
 ```
 
-uv installs the dependencies that `pyproject.toml` declares, at the versions of `uv.lock`. `test_link_protocol` checks the QR, the codes, the proofs and the frames, and needs no dependencies: `python3 -m unittest -v test_link_protocol` runs it alone. `test_link_bridge` pairs, links, queries and revokes a simulated iPhone written in Python over real iroh (127.0.0.1, no relay). `test_link_mcp` calls the tools with a real MCP client through the daemon.
+uv installs the dependencies that `pyproject.toml` declares, at the versions of `uv.lock`. `test_link_protocol` checks the QR, the codes, the proofs and the frames, and `test_link_export` reads a fake export (finding its folder, every tool, damaged days); neither needs dependencies: `python3 -m unittest -v test_link_protocol test_link_export` runs them alone. `test_link_bridge` pairs, links, queries and revokes a simulated iPhone written in Python over real iroh (127.0.0.1, no relay). `test_link_mcp` calls the tools with a real MCP client through the daemon, also with the iPhone away (with an export, without one and unpaired).
 
 ## Limits of this version
 
-- It answers only while Evoca is open on the iPhone. Answering with the iPhone in your pocket would need an encrypted copy of the archive on the computer, which does not exist.
+- Live, it answers only while Evoca is open on the iPhone. With the iPhone away it answers from the latest export, without anything after it or the search by meaning. Answering live with the iPhone in your pocket would need an encrypted copy of the archive on the computer, which does not exist.
 - By default it uses n0's public relays and discovery (they see ids, IP addresses and times, never content).
 - Tested end to end with the iOS simulator and with a real iPhone, always with a Mac as the computer. The relay path, NAT traversal and cellular networks have not been measured yet.
 - There is no short code to pair without a QR or the clipboard; that needs a PAKE.
@@ -203,7 +212,7 @@ Evoca dice lo mismo en su hoja de emparejamiento y, en Ajustes › Tus agentes �
 ### Requisitos
 
 - **[uv](https://docs.astral.sh/uv/getting-started/installation/).** Instala Python 3.11 o posterior si no lo tienes y las dependencias que declara el script (`iroh` 1.1.0, `mcp` 2.x, `segno`).
-- **Evoca 1.2.1 o posterior en el iPhone**, la primera versión con Evoca Link (Ajustes › Tus agentes).
+- **Evoca 1.3 o posterior en el iPhone**, la primera versión de la App Store con Evoca Link (Ajustes › Tus agentes).
 - **Una plataforma con rueda oficial de `iroh` en PyPI:** macOS 11 o posterior con Apple Silicon, Linux x86_64 o aarch64 con glibc 2.28 o posterior (`manylinux_2_28`) y Windows x64. No hay rueda ni paquete de código fuente para Mac Intel, Windows en ARM ni Linux con musl (Alpine), así que ahí no funciona.
 - El iPhone y el ordenador deben alcanzarse directamente (misma wifi o VPN) o tener los dos acceso a internet (relé).
 
@@ -265,9 +274,13 @@ Claude Desktop y cualquier otro cliente MCP que arranque servidores por stdio us
 
 `status`, `list_days`, `read_day`, `search`, `moments`, `recent`, `transcript_since` y `day_recap`, las mismas que en la tabla de arriba: estado del iPhone y de lo que guarda, días, un día entero en Markdown, búsqueda por palabras y por significado, momentos, lo dicho en las últimas horas, «¿qué se dijo?» (el tramo de Rebobinar, con qué minutos faltan, cuáles guarda el reloj para su próximo envío y cuáles siguen transcribiéndose) y el resumen del día. Los días se piden con `hoy` (o `today`), `ayer` (o `yesterday`) o `YYYY-MM-DD`.
 
-Con el iPhone fuera de alcance (Evoca cerrada o en segundo plano), cada herramienta responde con un error claro: abre Evoca en el iPhone.
+Con el iPhone fuera de alcance (Evoca cerrada o en segundo plano), las herramientas de lectura contestan con la última exportación, marcada como no en vivo; sin exportación, o sin ningún iPhone emparejado, responden con un error claro (abre Evoca en el iPhone, o empareja uno).
 
 Los datos de demostración nunca pasan por tuyos. Si el iPhone del enlace dice que Evoca está en modo demostración o en un simulador, o una de sus respuestas trae un resumen firmado por el motor de demostración («Demostración · v…» o «Demo · v…»), las herramientas responden con un error en vez de con los datos mientras dure ese enlace, y `status` marca el iPhone con `demo` o `simulator`. Arrancar el puente con `EVOCA_LINK_ALLOW_DEMO=1` los deja pasar, para pruebas.
+
+### Sin el iPhone: la última exportación
+
+Si hay un iPhone emparejado y no contesta, `list_days`, `read_day`, `search`, `moments`, `recent`, `transcript_since` y `day_recap` leen la última exportación de Evoca en este ordenador. Hace falta **Exportar automáticamente** activado en Evoca (Ajustes › Agentes y exportación › Exportar); la carpeta se busca sola en iCloud Drive y en `~/Library/CloudStorage`, o se indica con `EVOCA_EXPORT_DIR` (la carpeta `Evoca` con `manifest.json`, o la que la contiene), que en Windows y Linux es la única vía. El resultado no se confunde con uno en vivo: `source` es `export (stale)`, `stale` es `true`, `as_of` es la hora en que se escribió la exportación, `iphone_unreachable` dice por qué no contestó el iPhone y `note` avisa de que no es en vivo. Le falta todo lo posterior a `as_of`, la búsqueda por significado, el audio y Salud; `transcript_since` da frases en vez de párrafos y nunca dice que esté completa. No actúa con el iPhone conectado ni ocupado, si contesta con un error, si el puente no está en marcha ni si ya no queda ningún iPhone emparejado (`unpair` lo corta, y **Desconectar este ordenador** también con el enlace abierto; con el enlace cerrado, solo `unpair`). Es de solo lectura.
 
 ### Otros comandos, datos locales y problemas
 
@@ -279,7 +292,7 @@ El ordenador guarda sus datos en `~/Library/Application Support/Evoca Link` (mac
 
 ### Límites de esta versión
 
-- Solo responde con Evoca abierta en el iPhone. Para responder con el iPhone en el bolsillo haría falta una copia cifrada del archivo en el ordenador, que no existe.
+- En vivo solo responde con Evoca abierta en el iPhone; con el iPhone lejos contesta la última exportación, sin lo posterior a ella ni la búsqueda por significado. Para responder en vivo con el iPhone en el bolsillo haría falta una copia cifrada del archivo en el ordenador, que no existe.
 - Por defecto usa los relés y el descubrimiento públicos de n0 (ven ids, IP y horas, nunca contenido).
 - Probado de punta a punta con el simulador de iOS y con un iPhone real, siempre con un Mac como ordenador. Falta medir el relé, el paso por NAT y las redes móviles.
 - No hay código corto para emparejar sin QR ni portapapeles; pide un PAKE.

@@ -21,4 +21,4 @@ Source = "https://github.com/jmt-es/evoca-link"
 evoca-link = "evoca_link:main"
 
 [tool.setuptools]
-py-modules = ["evoca_link", "link_client", "link_daemon", "link_mcp", "link_protocol", "link_state"]
+py-modules = ["evoca_link", "link_client", "link_daemon", "link_export", "link_mcp", "link_protocol", "link_state"]

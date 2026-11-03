@@ -1,3 +1,4 @@
+import asyncio
 import time
 from datetime import datetime
 from pathlib import Path
@@ -7,6 +8,7 @@ from mcp.server.mcpserver.exceptions import ToolError
 from mcp.types import ToolAnnotations
 
 from link_client import ControlFailure, DaemonUnavailable, ensure_daemon, request
+from link_export import EXPORT_METHODS, HOW_TO_POINT, answer_from_export, export_summary, find_export_root, has_manifest
 from link_state import LinkState
 
 CALL_SECONDS = 30
@@ -16,11 +18,14 @@ MAX_HOURS = 72
 MAX_MINUTES = 120
 MAX_WAIT_SECONDS = 45
 MAX_READ_OFFSET = 2_000_000_000
+UNREACHABLE_CODES = frozenset({"not_connected", "timeout"})
 
 INSTRUCTIONS = (
     "Live, read-only access to Evoca on the user's iPhone (an all-day recorder: Apple Watch + iPhone, transcribed on the phone). "
     "Every call travels end to end encrypted over a direct peer-to-peer link (iroh: QUIC with TLS 1.3 between the paired keys; a relay only forwards ciphertext) "
     "and is answered by the iPhone itself, so it only works while Evoca is open on the iPhone. If a tool says the iPhone is not connected, ask the user to open Evoca. "
+    "When a paired iPhone does not answer, list_days, read_day, search, moments, recent, transcript_since and day_recap answer from the latest export of Evoca on this computer instead, and say so: source «export (stale)», stale true, and as_of the time that export was last written rather than the iPhone's clock. "
+    "Treat such a result as not live: it lacks anything after as_of and has no meaning search, audio or Health data, an empty one may only mean the export lacks it, and the user should open Evoca if the latest matters. "
     "Each result carries as_of, the iPhone's clock when it answered. Transcripts are automatic and can be wrong. speaker is present only when the iPhone recognises the voice with confidence "
     "(«Tú» is the user, a name the user gave, or «Persona N» numbered per day); without it the phrase may be anyone's. place is a name the user gave, never coordinates. "
     "Audio playing on a screen (TV, videos, music) is left out of search, recent and transcript_since unless include_on_screen is true. "
@@ -36,6 +41,7 @@ class Bridge:
     def __init__(self, state: LinkState, script: Path):
         self.state = state
         self.script = script
+        self.export_root: Path | None = None
 
     async def daemon(self, payload: dict, timeout: float) -> dict:
         try:
@@ -53,7 +59,39 @@ class Bridge:
         names = ", ".join(p.name for p in phones)
         return f"The iPhone ({names}) is not connected right now. Ask the user to open Evoca on the iPhone and keep it on screen: the link opens by itself and closes when the app goes to the background.{when}"
 
+    def locate_export(self) -> Path:
+        if self.export_root is None or not has_manifest(self.export_root):
+            self.export_root = find_export_root()
+        return self.export_root
+
+    async def export_overview(self) -> dict:
+        try:
+            root = await asyncio.to_thread(self.locate_export)
+        except FileNotFoundError as missing:
+            return {"found": False, "reason": str(missing), "hint": f"To use one, {HOW_TO_POINT}."}
+        return await asyncio.to_thread(export_summary, root)
+
+    async def from_export(self, method: str, params: dict, unreachable: ToolError) -> dict:
+        reason = str(unreachable).strip()
+        try:
+            root = await asyncio.to_thread(self.locate_export)
+        except FileNotFoundError as missing:
+            raise ToolError(f"{reason} No export of Evoca was found to answer from instead ({missing}): {HOW_TO_POINT}.") from missing
+        try:
+            return await asyncio.to_thread(answer_from_export, root, method, params, reason)
+        except ValueError as invalid:
+            raise ToolError(str(invalid)) from invalid
+
     async def call(self, method: str, params: dict, timeout: float = CALL_SECONDS) -> dict:
+        try:
+            return await self.live(method, params, timeout)
+        except ToolError as error:
+            failure = error.__cause__
+            if method in EXPORT_METHODS and isinstance(failure, ControlFailure) and failure.code in UNREACHABLE_CODES and self.state.phones():
+                return await self.from_export(method, params, error)
+            raise
+
+    async def live(self, method: str, params: dict, timeout: float) -> dict:
         try:
             reply = await self.daemon({"op": "call", "method": method, "params": params, "timeout": timeout}, timeout + 10)
         except ControlFailure as failure:
@@ -80,7 +118,7 @@ def bounded(value: int, low: int, high: int) -> int:
 
 @server.tool(annotations=READ_ONLY)
 async def status() -> dict:
-    """Whether the iPhone is connected right now, which iPhones are paired with this computer, and, when connected, what the iPhone holds (days recorded, today's minutes, phrases waiting for transcription, whether the watch or the phone is recording, and in recording.on_watch what the watch has recorded and still holds for its next batch: that is not a stop, it arrives by itself). Never fails when the iPhone is away: it says so."""
+    """Whether the iPhone is connected right now, which iPhones are paired with this computer, and, when connected, what the iPhone holds (days recorded, today's minutes, phrases waiting for transcription, whether the watch or the phone is recording, and in recording.on_watch what the watch has recorded and still holds for its next batch: that is not a stop, it arrives by itself). Never fails when the iPhone is away: it says so, and export says whether the latest export of Evoca on this computer (found, path, last_written) can answer meanwhile."""
     try:
         overview = await bridge.daemon({"op": "status"}, 10)
     except ControlFailure as failure:
@@ -107,6 +145,7 @@ async def status() -> dict:
             result["hint"] = str(error)
     else:
         result["hint"] = bridge.not_connected()
+    result["export"] = await bridge.export_overview()
     return result
 
 
@@ -124,7 +163,7 @@ async def read_day(day: str = "hoy", offset: int = 0) -> dict:
 
 @server.tool(annotations=READ_ONLY)
 async def search(query: str, since: str | None = None, until: str | None = None, limit: int = 20, include_on_screen: bool = False) -> dict:
-    """Searches everything recorded, on the iPhone itself: by words (accents and case ignored) and by meaning (Apple's on-device sentence embeddings). Each hit has date, time, speaker and place when known, the phrase, the phrases before and after, and whether it matched words, meaning or both. since and until take hoy, ayer or YYYY-MM-DD."""
+    """Searches everything recorded, on the iPhone itself: by words (accents and case ignored) and by meaning (Apple's on-device sentence embeddings). Each hit has date, time, speaker and place when known, the phrase, the phrases before and after, and whether it matched words, meaning or both. since and until take hoy, ayer or YYYY-MM-DD. When the iPhone does not answer, the latest export is searched by words only."""
     if not query.strip():
         raise ToolError("The search is empty.")
     return await bridge.call("search", {"query": query, "since": since, "until": until, "limit": bounded(limit, 1, MAX_LIMIT), "include_on_screen": include_on_screen})
@@ -144,7 +183,7 @@ async def recent(hours: int = 3, include_on_screen: bool = False) -> dict:
 
 @server.tool(annotations=READ_ONLY)
 async def transcript_since(minutes: int = 15, wait_seconds: int = 20, include_on_screen: bool = False) -> dict:
-    """«What was just said?»: the transcript of the last N minutes (at most 120), as paragraphs with time and speaker, the same window Evoca's Rewind reads. If part of it is still waiting for transcription, the iPhone transcribes it first and waits up to wait_seconds (at most 45). coverage says which minutes were not recorded (missing), which the watch recorded and still holds for its next batch (on_watch: not a gap and not a stop, the due time is in recording.on_watch.due_at), which are still being transcribed and which failed; complete is true when nothing is pending, on_watch included."""
+    """«What was just said?»: the transcript of the last N minutes (at most 120), as paragraphs with time and speaker, the same window Evoca's Rewind reads. If part of it is still waiting for transcription, the iPhone transcribes it first and waits up to wait_seconds (at most 45). coverage says which minutes were not recorded (missing), which the watch recorded and still holds for its next batch (on_watch: not a gap and not a stop, the due time is in recording.on_watch.due_at), which are still being transcribed and which failed; complete is true when nothing is pending, on_watch included. From an export (iPhone away) it lists phrases instead of paragraphs, complete is always false and coverage.unknown says what the export cannot tell."""
     wait = bounded(wait_seconds, 0, MAX_WAIT_SECONDS)
     return await bridge.call("transcript_since", {"minutes": bounded(minutes, 1, MAX_MINUTES), "wait_seconds": wait, "include_on_screen": include_on_screen}, timeout=wait + CALL_SECONDS)
 
